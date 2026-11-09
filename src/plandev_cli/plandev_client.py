@@ -628,7 +628,7 @@ class PlanDevClient:
     ) -> int:
 
         # Create unique jar identifier for server side
-        jar_id = self.upload_file(mission_model_path)
+        definition_file_id = self.upload_file(mission_model_path)
 
         create_model_mutation = """
         mutation CreateModel($model: mission_model_insert_input!) {
@@ -639,7 +639,7 @@ class PlanDevClient:
         """
 
         api_mission_model = ApiMissionModelCreate(
-            name=project_name, mission=mission, version=version, jar_id=jar_id
+            name=project_name, mission=mission, version=version, definition_file_id=definition_file_id
         )
 
         resp = self.plandev_host.post_to_graphql(
@@ -696,7 +696,7 @@ class PlanDevClient:
                 id
                 version
                 mission
-                jar_id
+                definition_file_id
             }
         }
         """

@@ -191,7 +191,7 @@ class ApiMissionModelCreate(ApiSerialize):
     name: str
     version: str
     mission: str
-    jar_id: str
+    definition_file_id: str
 
 
 @define

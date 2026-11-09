@@ -7,7 +7,7 @@ PlanDev-CLI provides a command-line interface and user-extendable Python API for
 
 ## Upgrading from Aerie-CLI
 
-Version 2.12.0 renames Aerie-CLI to **PlanDev-CLI** and supports [PlanDev 4.4.0](https://nasa-ammos.github.io/plandev-docs/). This release uses the new package, command, and Python API names exclusively.
+Version 2.12.0+ renames Aerie-CLI to **PlanDev-CLI** and supports [PlanDev 4.4.0+](https://nasa-ammos.github.io/plandev-docs/). This release uses the new package, command, and Python API names exclusively.
 
 Use `plandev-cli` instead of `aerie-cli`, or `python3 -m plandev_cli` instead of `python3 -m aerie_cli`.
 

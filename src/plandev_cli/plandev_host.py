@@ -8,7 +8,7 @@ from base64 import b64decode
 from attrs import define, field
 
 COMPATIBLE_PLANDEV_VERSIONS = [
-    "4.4.0"
+    "4.5.0"
 ]
 
 class PlanDevHostVersionError(RuntimeError):
