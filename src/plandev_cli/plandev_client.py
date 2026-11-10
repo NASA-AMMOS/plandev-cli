@@ -1,12 +1,16 @@
+import itertools
+import json
 import sys
 import time
 from pathlib import Path
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Union
 from copy import deepcopy
 
 import arrow
+from attrs import evolve
 
 from .schemas.api import ApiActivityPlanRead
 from .schemas.api import ApiEffectiveActivityArguments
@@ -66,11 +70,13 @@ class PlanDevClient:
                 duration
                 simulations{
                     id
+                    arguments
                 }
                 tags {
                     tag {
                         id
                         name
+                        color
                     }
                 }
                 activity_directives(order_by: { start_offset: asc }) {
@@ -82,6 +88,13 @@ class PlanDevClient:
                     metadata
                     anchor_id
                     anchored_to_start
+                    tags {
+                        tag {
+                            id
+                            name
+                            color
+                        }
+                    }
                 }
             }
         }
@@ -102,11 +115,13 @@ class PlanDevClient:
                 duration
                 simulations{
                     id
+                    arguments
                 }
                 tags {
                     tag {
                         id
                         name
+                        color
                     }
                 }
             }
@@ -222,80 +237,77 @@ class PlanDevClient:
     def create_activity_plan(
         self, model_id: int, plan_to_create: ActivityPlanCreate
     ) -> int:
+        """Create a plan from an `ActivityPlanCreate` via the gateway's `/importPlan`
 
-        api_plan_create = plan_to_create.to_api_create(model_id)
-        create_plan_mutation = """
-        mutation CreatePlan($plan: plan_insert_input!) {
-            createPlan: insert_plan_one(object: $plan) {
-                id
-                revision
+        Waits for the import to complete. Returns the new plan ID."""
+
+        # Plan transfer files need a unique ID on every directive. Anchors refer to them.
+        used_ids = {a.id for a in plan_to_create.activities if a.id is not None}
+        free_ids = (i for i in itertools.count(1) if i not in used_ids)
+        plan_to_create = evolve(
+            plan_to_create,
+            activities=[a if a.id is not None else evolve(a, id=next(free_ids)) for a in plan_to_create.activities],
+        )
+        return self.import_plan(plan_to_create.to_dict(), model_id)
+
+    def import_plan(
+        self,
+        plan: Dict,
+        model_id: Optional[int] = None,
+        name: Optional[str] = None,
+        poll_period: float = 1,
+        timeout: float = 900,
+    ) -> int:
+        """Import a PlanTransfer (v3, or v2) plan via the gateway's `/importPlan` and wait for it to finish
+
+        Args:
+            plan (Dict): Parsed PlanTransfer JSON
+            model_id (int, optional): Mission model for the plan. Required unless the plan embeds a `model`,
+                in which case it is ignored.
+            name (str, optional): Plan name. Defaults to the name in the plan.
+            poll_period (float): Seconds between checks of the import's status
+            timeout (float): Seconds to wait for the import to finish
+
+        Raises:
+            RuntimeError: The import was rejected, failed, or did not finish in time. A failed import leaves its
+                plan in PlanDev so it can be inspected or deleted.
+
+        Returns:
+            int: ID of the imported plan
+        """
+        if "model" not in plan and model_id is None:
+            raise ValueError("model_id is required unless the plan embeds its model")
+
+        # The gateway takes plan tags as IDs, and only from the form, not the file
+        tag_ids = [self.get_tag_id_by_name(t["tag"]["name"]) for t in plan.get("tags") or []]
+        form = {"name": name or plan.get("name"), "tags": json.dumps(tag_ids)}
+        if "model" not in plan:
+            # For a plan on an existing model the gateway reads the plan bounds from the form, not the file
+            form.update(model_id=model_id, start_time=plan.get("start_time"), duration=plan.get("duration"))
+
+        resp = self.plandev_host.post_to_gateway_import_plan(form, json.dumps(plan).encode())
+        plan_id = resp["plan_id"]
+
+        query = """
+        query GetPlanImportRequest($id: Int!) {
+            plan_import_request_by_pk(id: $id) {
+                status
+                reason
             }
         }
         """
-        plan_resp = self.plandev_host.post_to_graphql(
-            create_plan_mutation,
-            plan=api_plan_create.to_dict(),
-        )
-        plan_id = plan_resp["id"]
-        plan_revision = plan_resp["revision"]
-
-        #add plan tags if exists from plan_to_create
-        for tag in plan_to_create.tags:
-            self.add_plan_tag(plan_id, tag["tag"]["name"])
-                
-        # This loop exists to make sure all anchor IDs are updated as necessary
-
-        # Deep copy activities so we can augment and pop from the list
-        activities_to_upload = deepcopy(plan_to_create.activities)
-
-        # Map of old to new directive IDs
-        directive_id_mapping = {}
-
-        # Boolean catches errors to avoid an infinite loop
-        running = True
-        while len(activities_to_upload):
-            running = False
-
-            for act in activities_to_upload:
-                # If activity is anchored and the anchor isn't known yet, pass
-                # If activity is anchored and the anchor is known, add it
-                if act.anchor_id and act.anchor_id not in directive_id_mapping.keys():
-                    continue
-                else:
-                    if act.anchor_id:
-                        act.anchor_id = directive_id_mapping[act.anchor_id]
-                    directive_id_mapping[act.id] = self.create_activity(act, plan_id)
-                    activities_to_upload.remove(act)
-                    running = True
-
-            if not running:
+        deadline = time.monotonic() + timeout
+        while True:
+            request = self.plandev_host.post_to_graphql(query, id=resp["plan_import_request_id"])
+            if request["status"] == "complete":
+                return plan_id
+            if request["status"] == "failed":
                 raise RuntimeError(
-                    f"Failed to anchor activities: {', '.join([act.name for act in activities_to_upload])}"
+                    f"Import of plan {plan_id} failed (the plan was left in place): {json.dumps(request['reason'])}"
                 )
-
-        simulation_start_time = plan_to_create.start_time.isoformat()
-        simulation_end_time = plan_to_create.end_time.isoformat()
-        update_simulation_mutation = """
-        mutation updateSimulationBounds($plan_id: Int!, $simulation_start_time: timestamptz!, $simulation_end_time: timestamptz!) {
-            update_simulation(
-                where: {plan_id: {_eq: $plan_id}},
-                _set: {
-                    simulation_start_time: $simulation_start_time,
-                    simulation_end_time: $simulation_end_time
-                }
-            ){
-                affected_rows
-            }
-        }
-        """
-        _ = self.plandev_host.post_to_graphql(
-            update_simulation_mutation,
-            plan_id=plan_id,
-            simulation_start_time=simulation_start_time,
-            simulation_end_time=simulation_end_time
-        )
-
-        return plan_id
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"Import of plan {plan_id} did not finish within {timeout} seconds")
+            time.sleep(poll_period)
 
     def create_activity(self, activity_to_create: Activity, plan_id: int) -> int:
         api_activity_create = activity_to_create.to_api_create(plan_id)

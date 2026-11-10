@@ -92,6 +92,16 @@ def timedelta_to_postgres_interval(td: timedelta) -> str:
     return f"{int(seconds)} seconds {int(microseconds)} microseconds"
 
 
+def timedelta_to_hms(td: timedelta) -> str:
+    """Format a `timedelta` as a Postgres-style `[-]HH:MM:SS[.ffffff]` interval; hours are unbounded"""
+    us = (td.days * 86400 + td.seconds) * 10**6 + td.microseconds
+    sign = "-" if us < 0 else ""
+    seconds, us = divmod(abs(us), 10**6)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{sign}{hours:02d}:{minutes:02d}:{seconds:02d}" + (f".{us:06d}" if us else "")
+
+
 def parse_timedelta_str(td_string: str) -> timedelta:
     """Parse the string format returned by timedelta.__str__"""
     pattern = r"((?P<days>[-+]?\d+)\s*day[s]?,\s*)?(?P<hours>\d{1,2}):(?P<minutes>\d{2}):(?P<seconds>\d{2})(?:\.(?P<microseconds>\d{6}))?"

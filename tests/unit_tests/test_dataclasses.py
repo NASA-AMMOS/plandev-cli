@@ -5,6 +5,7 @@ from pathlib import Path
 import arrow
 
 from plandev_cli.schemas.client import ActivityPlanRead
+import json
 import pytest
 
 INPUTS_DIRECTORY = Path(__file__).parent.joinpath("files", "inputs")
@@ -36,3 +37,29 @@ def test_get_activity_start_time():
 
     # Pass activity instance instead of ID
     assert plan.get_activity_start_time(plan.activities[1]) == arrow.get("2030-01-01T02:00:00+00:00")
+
+
+def test_plan_serializes_as_transfer_v3():
+    with open(INPUTS_DIRECTORY.joinpath("get_activity_start_time.json"), "r") as fid:
+        plan: ActivityPlanRead = ActivityPlanRead.from_json(fid.read())
+
+    # end_time is derived, not serialized; sim_id is client-side only
+    assert plan.end_time == arrow.get("2030-01-01T12:00:00+00:00")
+    plan.sim_id = 7
+    serialized = json.loads(plan.to_json())
+    assert serialized["version"] == "3"
+    assert serialized["duration"] == "12:00:00"
+    assert "end_time" not in serialized and "sim_id" not in serialized
+    assert serialized["activities"][0]["start_offset"] == "-01:00:00"
+
+    # Round trip
+    plan.sim_id = None
+    assert ActivityPlanRead.from_json(json.dumps(serialized)) == plan
+
+
+def test_old_plan_format_is_rejected():
+    with pytest.raises(TypeError):
+        ActivityPlanRead.from_json(
+            '{"name": "old", "start_time": "2030-01-01T00:00:00+00:00", "end_time": "2030-01-02T00:00:00+00:00",'
+            ' "id": 1, "model_id": 1, "sim_id": 1, "activities": []}'
+        )

@@ -111,6 +111,7 @@ class ApiActivityRead(ActivityBase):
     """
 
     id: int
+    tags: List[Dict] = field(factory=list, kw_only=True)
 
 @define
 class ApiActivityPlanBase(ApiSerialize):
@@ -118,12 +119,6 @@ class ApiActivityPlanBase(ApiSerialize):
     name: str
     start_time: Arrow = field(
         converter=arrow.get
-    )
-
-@define
-class ApiActivityPlanCreate(ApiActivityPlanBase):
-    duration: timedelta = field(
-        converter = convert_to_time_delta,
     )
 
 @define

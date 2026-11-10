@@ -71,6 +71,12 @@ class MockPlanDevHost(PlanDevHost):
 
         return mock_transaction["response"]
 
+    def post_to_gateway_import_plan(self, form: Dict, file_contents: bytes) -> Dict:
+        mock_transaction = self.mock_data.pop(0)
+        assert form == mock_transaction["request"]["form"]
+        assert json.loads(file_contents) == mock_transaction["request"]["file"]
+        return mock_transaction["response"]
+
 
 def test_list_all_activity_plans():
     plandev_host = MockPlanDevHost('list_all_activity_plans')
@@ -86,9 +92,10 @@ def test_list_all_activity_plans():
             "duration": "48:00:00",
             "simulations": [
                 {
-                    "id": 1
+                    "id": 1,
+                    "arguments": {}
                 }
-            ], 
+            ],
             "tags": []
         },
         {
@@ -99,14 +106,16 @@ def test_list_all_activity_plans():
             "duration": "48:00:00",
             "simulations": [
                 {
-                    "id": 2
+                    "id": 2,
+                    "arguments": {}
                 }
             ],
             "tags": [
                 {
                     "tag": {
-                        "id": 1, 
-                        "name": "Test"
+                        "id": 1,
+                        "name": "Test",
+                        "color": "#ffffff"
                     }
                 }
             ]
@@ -194,8 +203,13 @@ def test_get_activity_plan_by_id():
     assert res == expected
 
 
+@pytest.fixture
+def no_sleep(monkeypatch):
+    monkeypatch.setattr("plandev_cli.plandev_client.time.sleep", lambda _: None)
+
+
 @pytest.mark.parametrize(["case_name"], [("create_activity_plan_1",), ("create_activity_plan_2",)])
-def test_create_activity_plan(case_name: str):
+def test_create_activity_plan(case_name: str, no_sleep):
     plandev_host = MockPlanDevHost(case_name)
     client = PlanDevClient(plandev_host)
 
@@ -206,6 +220,58 @@ def test_create_activity_plan(case_name: str):
 
     # Expected plan ID from mock response is 456
     assert res == 456
+    assert plandev_host.mock_data == []
+
+
+def test_import_plan_embedded_model(no_sleep):
+    """A plan embedding its model needs no model ID, and the plan bounds come from the file"""
+    plandev_host = MockPlanDevHost("import_plan_embedded")
+    client = PlanDevClient(plandev_host)
+
+    with open(MockPlanDevHost.MOCK_QUERIES_DIRECTORY.joinpath("import_plan_embedded.json")) as fid:
+        plan = json.load(fid)[0]["request"]["file"]
+
+    assert client.import_plan(plan) == 456
+    assert plandev_host.mock_data == []
+
+
+def test_import_plan_failed(no_sleep):
+    plandev_host = MockPlanDevHost("import_plan_failed")
+    client = PlanDevClient(plandev_host)
+
+    with open(MockPlanDevHost.MOCK_QUERIES_DIRECTORY.joinpath("import_plan_failed.json")) as fid:
+        plan = json.load(fid)[0]["request"]["file"]
+
+    with pytest.raises(RuntimeError, match="Import of plan 456 failed.*Activity type NoOp not found"):
+        client.import_plan(plan, model_id=7)
+
+
+def test_import_plan_requires_model_id():
+    client = PlanDevClient(None)
+    plan = {"version": "3", "name": "no-model", "start_time": "2030-01-01T00:00:00+00:00", "duration": "01:00:00"}
+    with pytest.raises(ValueError, match="model_id is required"):
+        client.import_plan(plan)
+
+
+def test_create_activity_plan_assigns_missing_activity_ids(no_sleep):
+    """Activities built in Python may have no ID; they are numbered around any IDs already used"""
+    class CapturingHost(MockPlanDevHost):
+        def post_to_gateway_import_plan(self, form, file_contents):
+            self.imported = json.loads(file_contents)
+            return {"plan_id": 1, "model_id": 7, "plan_import_request_id": 2}
+
+        def post_to_graphql(self, query, **kwargs):
+            return {"status": "complete", "reason": None}
+
+    host = CapturingHost("create_activity_plan_1")
+    plan = ActivityPlanCreate(
+        name="p", start_time="2030-01-01T00:00:00+00:00", duration="01:00:00",
+        activities=[Activity(type="A", start_offset="00:00:00"), Activity(type="B", start_offset="00:10:00", id=1)],
+    )
+    PlanDevClient(host).create_activity_plan(7, plan)
+
+    assert [a["id"] for a in host.imported["activities"]] == [2, 1]
+    assert plan.activities[0].id is None  # input is untouched
 
 
 def test_get_resource_types():

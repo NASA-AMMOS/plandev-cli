@@ -1,0 +1,52 @@
+[
+    {
+        "request": {
+            "form": {
+                "name": "bad",
+                "tags": "[]",
+                "model_id": 7,
+                "start_time": "2030-01-01T00:00:00+00:00",
+                "duration": "24:00:00"
+            },
+            "file": {
+                "version": "3",
+                "name": "bad",
+                "start_time": "2030-01-01T00:00:00+00:00",
+                "duration": "24:00:00",
+                "simulation_arguments": {},
+                "activities": []
+            }
+        },
+        "response": {
+            "plan_id": 456,
+            "model_id": 7,
+            "plan_import_request_id": 12
+        }
+    },
+    {
+        "request": {
+            "query": "query GetPlanImportRequest($id: Int!) { plan_import_request_by_pk(id: $id) { status reason } }",
+            "variables": {
+                "id": 12
+            }
+        },
+        "response": {
+            "status": "importing_plan",
+            "reason": null
+        }
+    },
+    {
+        "request": {
+            "query": "query GetPlanImportRequest($id: Int!) { plan_import_request_by_pk(id: $id) { status reason } }",
+            "variables": {
+                "id": 12
+            }
+        },
+        "response": {
+            "status": "failed",
+            "reason": {
+                "message": "Activity type NoOp not found"
+            }
+        }
+    }
+]

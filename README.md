@@ -29,6 +29,22 @@ Saved authentication sessions are not migrated. After upgrading, reactivate a co
 plandev-cli activate
 ```
 
+### Plan file format change
+
+`plans download` now writes, and `plans upload` now reads, the **PlanTransfer v3** format shared with the PlanDev UI and Gateway. The previous CLI-specific plan format is no longer supported: files with `end_time` or `sim_id` must be converted.
+
+| Previous format | PlanTransfer v3 |
+|---|---|
+| `end_time` | `duration`, an interval such as `"48:00:00"`. Python's `end_time` is still available as a computed `ActivityPlan*.end_time` property, but is not in the JSON. |
+| _(not exported)_ | `simulation_arguments` |
+| `tags` on the plan only, with tag IDs | `tags` on the plan and on each activity, as `{"tag": {"name": ..., "color": ...}}` |
+| `sim_id` | _(removed from JSON; `ActivityPlanRead.sim_id` remains in Python)_ |
+| _(none)_ | `"version": "3"` |
+
+Activity `start_offset` values are now written as `HH:MM:SS` rather than Python's `timedelta` text (e.g. `26:00:00`, not `1 day, 2:00:00`). To convert an old file, delete `sim_id`, replace `end_time` with `duration` (`end_time` minus `start_time`), and add `"version": "3"` and `"simulation_arguments": {}`.
+
+`plans upload` and `PlanDevClient.create_activity_plan()` now go through the Gateway's `/importPlan` and wait for the import to finish before returning the plan ID. `--model-id` is required unless the file embeds a `model`, in which case the plan is imported read-only on a new non-executable model and `--model-id` is ignored. If an import fails, the CLI reports the reason and leaves the failed plan in PlanDev; delete it with `plans delete`. This needs PlanDev 4.5.0 or later.
+
 Command expansion is unavailable in this CLI release - previous CLI commands used the deprecated EDSL expansion APIs. Template-based expansion is supported by the PlanDev UI; CLI support is planned for a future release.
 
 
