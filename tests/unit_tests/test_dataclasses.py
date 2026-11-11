@@ -5,7 +5,7 @@ from pathlib import Path
 import arrow
 
 from plandev_cli.schemas.api import ApiActivityPlanRead
-from plandev_cli.schemas.client import ActivityPlanRead
+from plandev_cli.schemas.client import Activity, ActivityPlanCreate, ActivityPlanRead
 import json
 import pytest
 
@@ -56,6 +56,16 @@ def test_plan_serializes_as_transfer_v3():
     # Round trip
     plan.sim_id = None
     assert ActivityPlanRead.from_json(json.dumps(serialized)) == plan
+
+def test_plan_export_defaults_empty_activity_arguments_to_object():
+    plan = ActivityPlanCreate(
+        name="test plan",
+        start_time="2030-01-01T00:00:00+00:00",
+        duration="01:00:00",
+        activities=[Activity(id=1, type="TestActivity", start_offset="00:00:00")],
+    )
+
+    assert json.loads(plan.to_json())["activities"][0]["arguments"] == {}
 
 def test_plan_export_includes_simulation_template_arguments():
     api_plan = ApiActivityPlanRead.from_dict({

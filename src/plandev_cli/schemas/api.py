@@ -66,11 +66,9 @@ class ActivityBase(ApiSerialize):
     start_offset: timedelta = field(
         converter = convert_to_time_delta
     )
-    metadata: Optional[Dict[str, str]] = field(factory=lambda: {}, kw_only=True)
+    metadata: Optional[Dict[str, str]] = field(factory=dict, kw_only=True)
     name: Optional[str] = field(factory=lambda: "", kw_only=True)
-    arguments: Optional[Dict[str, Any]] = field(
-        factory=lambda: [], kw_only=True
-    )
+    arguments: Optional[Dict[str, Any]] = field(factory=dict, kw_only=True)
     anchor_id: Optional[int] = field(default=None, kw_only=True)
     anchored_to_start: Optional[bool] = field(default=None, kw_only=True)
 
