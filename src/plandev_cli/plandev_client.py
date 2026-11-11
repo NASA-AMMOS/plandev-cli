@@ -116,9 +116,12 @@ class PlanDevClient:
                 name
                 start_time
                 duration
-                simulations{
+                simulations {
                     id
                     arguments
+                    template: simulation_template {
+                        arguments
+                    }
                 }
                 tags {
                     tag {
