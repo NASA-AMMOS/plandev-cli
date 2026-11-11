@@ -1,7 +1,7 @@
 [
     {
         "request": {
-            "query": "query get_plans ($plan_id: Int!) { plan_by_pk(id: $plan_id) { id model_id name start_time duration simulations{ id } tags { tag { id name } } activity_directives(order_by: { start_offset: asc }) { id name type start_offset arguments metadata anchor_id anchored_to_start } } }",
+            "query": "query get_plans ($plan_id: Int!) { plan_by_pk(id: $plan_id) { id model_id name start_time duration simulations { id arguments template: simulation_template { arguments } } tags { tag { id name color } } activity_directives(order_by: { start_offset: asc }) { id name type start_offset arguments metadata anchor_id anchored_to_start tags { tag { id name color } } } } }",
             "variables": {
                 "plan_id": 1
             }
@@ -14,7 +14,11 @@
             "duration": "12:00:00",
             "simulations": [
                 {
-                    "id": 1
+                    "id": 1,
+                    "arguments": {
+                        "initialPlantCount": 2
+                    },
+                    "template": null
                 }
             ],
             "activity_directives": [
@@ -26,7 +30,16 @@
                     "arguments": {},
                     "metadata": {},
                     "anchor_id": null,
-                    "anchored_to_start": true
+                    "anchored_to_start": true,
+                    "tags": [
+                        {
+                            "tag": {
+                                "id": 9,
+                                "name": "Fruit",
+                                "color": null
+                            }
+                        }
+                    ]
                 },
                 {
                     "id": 2,
@@ -36,7 +49,8 @@
                     "arguments": {},
                     "metadata": {},
                     "anchor_id": 1,
-                    "anchored_to_start": true
+                    "anchored_to_start": true,
+                    "tags": []
                 },
                 {
                     "id": 3,
@@ -48,7 +62,17 @@
                     },
                     "metadata": {},
                     "anchor_id": 1,
-                    "anchored_to_start": false
+                    "anchored_to_start": false,
+                    "tags": []
+                }
+            ],
+            "tags": [
+                {
+                    "tag": {
+                        "id": 4,
+                        "name": "Test",
+                        "color": "#ff0000"
+                    }
                 }
             ]
         }

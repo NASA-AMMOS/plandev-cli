@@ -25,7 +25,7 @@ def download(
     ),
     output: str = typer.Option(..., "--output", "-o", help="The output file destination", prompt=True)
 ):
-    """Download a plan and save it locally as a JSON file."""
+    """Download a plan and save it locally as a PlanTransfer v3 JSON file."""
     plan = CommandContext.get_client().get_activity_plan_by_id(id, full_args)
     with open(output, "w") as out_file:
         out_file.write(plan.to_json(indent=2))
@@ -163,22 +163,27 @@ def download_resources(
 @plans_app.command()
 def upload(
     input: str = typer.Option(
-        ..., "--input", "-i", help="The input file from which to create an PlanDev plan", prompt=True
+        ..., "--input", "-i", help="The PlanTransfer JSON file from which to create a PlanDev plan", prompt=True
     ),
-    model_id: int = typer.Option(
-        ..., "--model-id", "-m", help="The mission model ID to associate with the plan", prompt=True
+    model_id: Union[int, None] = typer.Option(
+        None, "--model-id", "-m",
+        help="The mission model ID to associate with the plan. Required unless the file embeds its model, in which case it is ignored."
     ),
     time_tag: bool = typer.Option(False, help="Append time tag to plan name"),
 ):
-    """Create a plan from an input JSON file."""
+    """Create a plan from a PlanTransfer JSON file, as exported by `plans download` or the PlanDev UI.
+
+    Waits for the import to finish. A file that embeds a `model` is imported read-only onto a new non-executable model."""
     client = CommandContext.get_client()
 
     with open(input) as in_file:
-        contents = in_file.read()
-    plan_to_create = ActivityPlanCreate.from_json(contents)
+        plan = json.load(in_file)
+    if "model" not in plan and model_id is None:
+        model_id = typer.prompt("Model ID", type=int)
+    name = plan.get("name")
     if time_tag:
-        plan_to_create.name += arrow.utcnow().format("YYYY-MM-DDTHH-mm-ss")
-    plan_id = client.create_activity_plan(model_id, plan_to_create)
+        name = (name or "") + arrow.utcnow().format("YYYY-MM-DDTHH-mm-ss")
+    plan_id = client.import_plan(plan, model_id, name)
     typer.echo(f"Created plan ID: {plan_id}")
 
 

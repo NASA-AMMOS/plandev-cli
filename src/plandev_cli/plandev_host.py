@@ -8,7 +8,7 @@ from base64 import b64decode
 from attrs import define, field
 
 COMPATIBLE_PLANDEV_VERSIONS = [
-    "4.4.0"
+    "4.5.0"
 ]
 
 class PlanDevHostVersionError(RuntimeError):
@@ -196,6 +196,34 @@ class PlanDevHost:
             return resp.json()
         else:
             raise RuntimeError(f"Error uploading file: {file_name}")
+
+    def post_to_gateway_import_plan(self, form: Dict[str, str], file_contents: bytes) -> Dict:
+        """Issue a post request to import a PlanTransfer file via the PlanDev gateway
+
+        The gateway responds once the plan exists. The rest of the import continues in the background.
+
+        Args:
+            form (Dict[str, str]): multipart form fields (name, model_id, start_time, duration, tags)
+            file_contents (bytes): PlanTransfer JSON file contents
+
+        Raises:
+            RuntimeError: Raised if the request receives an error response
+
+        Returns:
+            Dict: `plan_id`, `model_id` and `plan_import_request_id`
+        """
+
+        resp = self.session.post(
+            self.gateway_url + "/importPlan",
+            data=form,
+            files={"plan_file": ("plan.json", file_contents)},
+            headers=self.get_auth_headers(),
+        )
+
+        if resp.ok:
+            return resp.json()
+        else:
+            raise RuntimeError(f"Error importing plan: {resp.text}")
 
     def change_role(self, new_role: str) -> None:
         """Change role for PlanDev interaction
