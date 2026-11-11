@@ -1,7 +1,7 @@
 [
     {
         "request": {
-            "query": "query get_plans ($plan_id: Int!) { plan_by_pk(id: $plan_id) { id model_id name start_time duration simulations{ id arguments } tags { tag { id name color } } activity_directives(order_by: { start_offset: asc }) { id name type start_offset arguments metadata anchor_id anchored_to_start tags { tag { id name color } } } } }",
+            "query": "query get_plans ($plan_id: Int!) { plan_by_pk(id: $plan_id) { id model_id name start_time duration simulations{ id arguments template: simulation_template { arguments } } tags { tag { id name color } } activity_directives(order_by: { start_offset: asc }) { id name type start_offset arguments metadata anchor_id anchored_to_start tags { tag { id name color } } } } }",
             "variables": {
                 "plan_id": 1
             }
@@ -17,7 +17,8 @@
                     "id": 1,
                     "arguments": {
                         "initialPlantCount": 2
-                    }
+                    },
+                    "template": null
                 }
             ],
             "activity_directives": [

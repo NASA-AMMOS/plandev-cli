@@ -4,6 +4,7 @@
 from pathlib import Path
 import arrow
 
+from plandev_cli.schemas.api import ApiActivityPlanRead
 from plandev_cli.schemas.client import ActivityPlanRead
 import json
 import pytest
@@ -56,6 +57,32 @@ def test_plan_serializes_as_transfer_v3():
     plan.sim_id = None
     assert ActivityPlanRead.from_json(json.dumps(serialized)) == plan
 
+def test_plan_export_includes_simulation_template_arguments():
+    api_plan = ApiActivityPlanRead.from_dict({
+        "id": 1,
+        "model_id": 1,
+        "name": "plan with simulation template",
+        "start_time": "2030-01-01T00:00:00+00:00",
+        "duration": "01:00:00",
+        "activity_directives": [],
+        "simulations": [{
+            "id": 1,
+            "template": {
+                "arguments": {"template_only": 100, "overridden": 2},
+            },
+            "arguments": {"overridden": 9, "plan_only": 7},
+        }],
+    })
+
+    plan = ActivityPlanRead.from_api_read(api_plan)
+    exported = json.loads(plan.to_json())
+
+    # export must retain template values while giving plan overrides precedence.
+    assert exported["simulation_arguments"] == {
+        "template_only": 100,
+        "overridden": 9,
+        "plan_only": 7,
+    }
 
 def test_old_plan_format_is_rejected():
     with pytest.raises(TypeError):

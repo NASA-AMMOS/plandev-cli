@@ -231,6 +231,14 @@ class ActivityPlanRead(EmptyActivityPlan):
     @classmethod
     def from_api_read(cls, api_plan_read: ApiActivityPlanRead) -> "ActivityPlanRead":
         simulation = api_plan_read.simulations[0]
+        sim_template = simulation.get("template") or {}
+        # simulation merges passed arguments together with default arguments from the sim template
+        # to export a plan with the same sim arguments, we must merge them here too
+        simulation_arguments = {
+            **(sim_template.get("arguments") or {}),
+            **(simulation.get("arguments") or {}),
+        }
+
         return ActivityPlanRead(
             id=api_plan_read.id,
             name=api_plan_read.name,
@@ -238,7 +246,7 @@ class ActivityPlanRead(EmptyActivityPlan):
             sim_id=simulation["id"],
             start_time=api_plan_read.start_time,
             duration=api_plan_read.duration,
-            simulation_arguments=simulation.get("arguments") or {},
+            simulation_arguments=simulation_arguments,
             tags=transfer_tags(api_plan_read.tags),
             activities= None if api_plan_read.activity_directives is None else [
                 Activity.from_api_read(api_activity)

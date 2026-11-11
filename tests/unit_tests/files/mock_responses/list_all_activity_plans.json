@@ -1,7 +1,7 @@
 [
     {
         "request": {
-            "query": "\n query list_all_plans {\n plan(order_by: { id: asc }) {\n id\n model_id\n name\n start_time\n duration\n simulations{\n id\n arguments\n }\n tags {\n tag {\n id\n name\n color\n }\n }\n }\n }",
+            "query": "\n query list_all_plans {\n plan(order_by: { id: asc }) {\n id\n model_id\n name\n start_time\n duration\n simulations{\n id\n arguments\n template: simulation_template {\n arguments\n } }\n tags {\n tag {\n id\n name\n color\n }\n }\n }\n }",
             "variables": {}
         },
         "response": [
@@ -14,7 +14,8 @@
                 "simulations": [
                     {
                         "id": 1,
-                        "arguments": {}
+                        "arguments": {},
+                        "template": null
                     }
                 ],
                 "tags": []
@@ -28,7 +29,8 @@
                 "simulations": [
                     {
                         "id": 2,
-                        "arguments": {}
+                        "arguments": {},
+                        "template": null
                     }
                 ],
                 "tags": [
