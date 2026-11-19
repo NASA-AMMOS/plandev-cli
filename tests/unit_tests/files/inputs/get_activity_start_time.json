@@ -1,78 +1,86 @@
 {
-    "name": "get-activity-start-time",
-    "start_time": "2030-01-01T00:00:00+00:00",
-    "end_time": "2030-01-01T12:00:00+00:00",
-    "id": 1,
-    "model_id": 1,
-    "sim_id": 1,
-    "activities": [
-      {
-        "type": "ACT_One",
-        "arguments": {},
-        "name": "Anchored_1",
-        "metadata": {},
-        "anchor_id": 2,
-        "anchored_to_start": true,
-        "start_offset": "-1 day, 23:00:00",
-        "id": 1
+  "version": "3",
+  "id": 1,
+  "model_id": 1,
+  "name": "get-activity-start-time",
+  "start_time": "2030-01-01T00:00:00+00:00",
+  "duration": "12:00:00",
+  "simulation_arguments": {},
+  "tags": [],
+  "activities": [
+    {
+      "type": "ACT_One",
+      "arguments": {},
+      "name": "Anchored_1",
+      "metadata": {},
+      "anchor_id": 2,
+      "anchored_to_start": true,
+      "start_offset": "-01:00:00",
+      "id": 1,
+      "tags": []
+    },
+    {
+      "type": "ACT_Two",
+      "arguments": {},
+      "name": "Anchored_to_plan_start",
+      "metadata": {},
+      "anchor_id": null,
+      "anchored_to_start": true,
+      "start_offset": "02:00:00",
+      "id": 2,
+      "tags": []
+    },
+    {
+      "type": "ACT_Three",
+      "arguments": {
+        "test": "test"
       },
-      {
-        "type": "ACT_Two",
-        "arguments": {},
-        "name": "Anchored_to_plan_start",
-        "metadata": {},
-        "anchor_id": null,
-        "anchored_to_start": true,
-        "start_offset": "2:00:00",
-        "id": 2
+      "name": "Anchored_2_to_end",
+      "metadata": {},
+      "anchor_id": 1,
+      "anchored_to_start": false,
+      "start_offset": "04:00:00",
+      "id": 3,
+      "tags": []
+    },
+    {
+      "type": "ACT_Four",
+      "arguments": {
+        "test": "test"
       },
-      {
-        "type": "ACT_Three",
-        "arguments": {
-          "test": "test"
-        },
-        "name": "Anchored_2_to_end",
-        "metadata": {},
-        "anchor_id": 1,
-        "anchored_to_start": false,
-        "start_offset": "4:00:00",
-        "id": 3
+      "name": "Anchored_2_to_start",
+      "metadata": {},
+      "anchor_id": 1,
+      "anchored_to_start": true,
+      "start_offset": "06:00:00",
+      "id": 4,
+      "tags": []
+    },
+    {
+      "type": "ACT_Five",
+      "arguments": {
+        "test": "test"
       },
-      {
-        "type": "ACT_Four",
-        "arguments": {
-          "test": "test"
-        },
-        "name": "Anchored_2_to_start",
-        "metadata": {},
-        "anchor_id": 1,
-        "anchored_to_start": true,
-        "start_offset": "6:00:00",
-        "id": 4
+      "name": "Ancored_to_plan_end",
+      "metadata": {},
+      "anchor_id": null,
+      "anchored_to_start": false,
+      "start_offset": "-06:00:00",
+      "id": 5,
+      "tags": []
+    },
+    {
+      "type": "ACT_Six",
+      "arguments": {
+        "test": "test"
       },
-      {
-        "type": "ACT_Five",
-        "arguments": {
-          "test": "test"
-        },
-        "name": "Ancored_to_plan_end",
-        "metadata": {},
-        "anchor_id": null,
-        "anchored_to_start": false,
-        "start_offset": "-1 day, 18:00:00",
-        "id": 5
-      },
-      {
-        "type": "ACT_Six",
-        "arguments": {
-          "test": "test"
-        },
-        "name": "Anchor_no_existo",
-        "metadata": {},
-        "anchor_id": 123,
-        "anchored_to_start": true,
-        "start_offset": "2:00:00",
-        "id": 6
-      }
-    ]
-  }
+      "name": "Anchor_no_existo",
+      "metadata": {},
+      "anchor_id": 123,
+      "anchored_to_start": true,
+      "start_offset": "02:00:00",
+      "id": 6,
+      "tags": []
+    }
+  ]
+}

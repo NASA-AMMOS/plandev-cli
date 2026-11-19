@@ -1,3 +1,4 @@
+import json
 import os
 import pytest
 
@@ -205,11 +206,19 @@ def test_plan_download():
     )
     path_to_plan = Path(DOWNLOADED_FILE_NAME)
     assert path_to_plan.exists()
+    downloaded = json.loads(path_to_plan.read_text())
     path_to_plan.unlink()
     assert result.exit_code == 0,\
         f"{result.stdout}"\
         f"{result.stderr}"
     assert f"Wrote activity plan" in result.stdout
+
+    # PlanTransfer v3
+    assert downloaded["version"] == "3"
+    assert downloaded["id"] == plan_id
+    assert "duration" in downloaded and "simulation_arguments" in downloaded
+    assert "end_time" not in downloaded
+    assert all("tags" in a for a in downloaded["activities"])
 
 def test_plan_download_expanded_args():
     """

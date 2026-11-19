@@ -66,11 +66,9 @@ class ActivityBase(ApiSerialize):
     start_offset: timedelta = field(
         converter = convert_to_time_delta
     )
-    metadata: Optional[Dict[str, str]] = field(factory=lambda: {}, kw_only=True)
+    metadata: Optional[Dict[str, str]] = field(factory=dict, kw_only=True)
     name: Optional[str] = field(factory=lambda: "", kw_only=True)
-    arguments: Optional[Dict[str, Any]] = field(
-        factory=lambda: [], kw_only=True
-    )
+    arguments: Optional[Dict[str, Any]] = field(factory=dict, kw_only=True)
     anchor_id: Optional[int] = field(default=None, kw_only=True)
     anchored_to_start: Optional[bool] = field(default=None, kw_only=True)
 
@@ -111,6 +109,7 @@ class ApiActivityRead(ActivityBase):
     """
 
     id: int
+    tags: List[Dict] = field(factory=list, kw_only=True)
 
 @define
 class ApiActivityPlanBase(ApiSerialize):
@@ -118,12 +117,6 @@ class ApiActivityPlanBase(ApiSerialize):
     name: str
     start_time: Arrow = field(
         converter=arrow.get
-    )
-
-@define
-class ApiActivityPlanCreate(ApiActivityPlanBase):
-    duration: timedelta = field(
-        converter = convert_to_time_delta,
     )
 
 @define
@@ -191,7 +184,7 @@ class ApiMissionModelCreate(ApiSerialize):
     name: str
     version: str
     mission: str
-    jar_id: str
+    definition_file_id: str
 
 
 @define

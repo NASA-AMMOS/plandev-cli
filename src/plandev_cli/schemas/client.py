@@ -12,15 +12,17 @@ from enum import Enum
 
 from attrs import define, field
 from attrs import converters
+from attrs import validators
 import arrow
 from arrow import Arrow
 import json
 from attrs import asdict
 
 from plandev_cli.utils.serialization import parse_timedelta_str
+from plandev_cli.utils.serialization import postgres_interval_to_timedelta
+from plandev_cli.utils.serialization import timedelta_to_hms
 from plandev_cli.schemas.api import ApiActivityCreate
 from plandev_cli.schemas.api import ApiActivityUpdate
-from plandev_cli.schemas.api import ApiActivityPlanCreate
 from plandev_cli.schemas.api import ApiActivityPlanRead
 from plandev_cli.schemas.api import ApiActivityRead
 from plandev_cli.schemas.api import ApiAsSimulatedActivity
@@ -33,7 +35,11 @@ from plandev_cli.schemas.api import ApiParcelCreate
 
 def parse_timedelta_str_converter(t) -> timedelta:
     if isinstance(t, str):
-        return parse_timedelta_str(t)
+        # Postgres-style "HH:MM:SS" (the plan format), else the `timedelta.__str__` style "1 day, 2:00:00"
+        try:
+            return postgres_interval_to_timedelta(t)
+        except ValueError:
+            return parse_timedelta_str(t)
     if isinstance(t, timedelta):
         return t
     raise TypeError(f"{type(t)} is not a supported input. Must be str or timedelta!")
@@ -44,6 +50,18 @@ def serialize_timedelta_to_str(inst, field, value):
     if isinstance(value, Arrow):
         return str(value)
     return value
+
+def serialize_transfer(inst, field, value):
+    """Serialize for the PlanTransfer format: Postgres-style intervals, ISO timestamps"""
+    if isinstance(value, timedelta):
+        return timedelta_to_hms(value)
+    if isinstance(value, Arrow):
+        return str(value)
+    return value
+
+def transfer_tags(tags: List[Dict]) -> List[Dict]:
+    """Reduce GraphQL tags (`{"tag": {"id", "name", "color"}}`) to the PlanTransfer form (`name` and `color` only)"""
+    return [{"tag": {"name": t["tag"]["name"], "color": t["tag"].get("color")}} for t in tags]
 
 class ClientSerialize:
     @classmethod
@@ -64,11 +82,16 @@ class Activity(ActivityBase, ClientSerialize):
     
     Dataclass designed for client-side manipulation of activity directives.
     Use helper methods to covert to and from API-compatible dataclasses.
+    Serializes as a PlanTransfer v3 activity.
     """
     start_offset: timedelta = field(
         converter = parse_timedelta_str_converter
     )
     id: Optional[int] = field(default=None)
+    tags: List[Dict] = field(factory=list)
+
+    def to_dict(self) -> dict:
+        return asdict(self, value_serializer=serialize_transfer)
 
     def to_api_create(self, plan_id: int):
         return ApiActivityCreate(
@@ -105,55 +128,50 @@ class Activity(ActivityBase, ClientSerialize):
             arguments=api_activity_read.arguments,
             metadata=api_activity_read.metadata,
             anchor_id=api_activity_read.anchor_id,
-            anchored_to_start=api_activity_read.anchored_to_start
+            anchored_to_start=api_activity_read.anchored_to_start,
+            tags=transfer_tags(api_activity_read.tags)
         )
+
+def _activities_converter(items):
+    return [Activity.from_dict(d) if isinstance(d, dict) else d for d in items]
 
 @define
 class EmptyActivityPlan(ClientSerialize):
+    """Fields shared by plans on download and upload. Serializes as a PlanTransfer v3 plan (without `model`/`results`).
+
+    `end_time` is derived from `start_time` and `duration` and is not serialized.
+    """
+    version: str = field(default="3", kw_only=True, validator=validators.in_(["3"]))
+    id: Optional[int] = field(default=None, kw_only=True)
+    model_id: Optional[int] = field(default=None, kw_only=True)
     name: str
     start_time: Arrow = field(
         converter = arrow.get
     )
-    end_time: Arrow = field(
-        converter = arrow.get)
-    tags: Optional[List[Dict]] 
+    duration: timedelta = field(
+        converter = parse_timedelta_str_converter
+    )
+    simulation_arguments: Dict[str, Any] = field(factory=dict)
+    tags: List[Dict] = field(factory=list)
 
-    def duration(self) -> timedelta:
-        return self.end_time - self.start_time
+    @property
+    def end_time(self) -> Arrow:
+        return self.start_time + self.duration
+
+    def to_dict(self) -> dict:
+        # `sim_id` is client-side only, and the transfer schema rejects null ids
+        return asdict(
+            self,
+            filter=lambda a, v: a.name != "sim_id" and not (a.name in ("id", "model_id") and v is None),
+            value_serializer=serialize_transfer,
+        )
 
 
 @define
 class ActivityPlanCreate(EmptyActivityPlan):
     activities: List[Activity] = field(
-        converter=converters.optional(
-            lambda listOfDicts: [Activity.from_dict(d) if isinstance(d, dict) else d for d in listOfDicts])
-    )
-
-    id: Optional[int] = field(
-        default=None
-    )
-    name: Optional[str] = field(
-        default=None
-    )
-    start_time: Optional[Arrow] = field(
-        default = None,
-        converter = arrow.get
-    )
-    end_time: Optional[Arrow] = field(
-        default = None,
-        converter = arrow.get
-    )
-    model_id: Optional[int] = field(
-        default=None
-    )
-    sim_id: Optional[int] = field(
-        default=None
-    )
-    tags: Optional[List[Dict]] = field(
-        default=[], 
-        converter=converters.optional(
-            lambda listOfDicts: [d for d in listOfDicts]
-        )
+        factory=list,
+        converter=_activities_converter
     )
 
     @classmethod
@@ -161,35 +179,19 @@ class ActivityPlanCreate(EmptyActivityPlan):
         return ActivityPlanCreate(
             name=plan_read.name,
             start_time=plan_read.start_time,
-            end_time=plan_read.end_time,
+            duration=plan_read.duration,
+            simulation_arguments=plan_read.simulation_arguments,
+            tags=plan_read.tags,
             activities=plan_read.activities,
-            tags=plan_read.tags
-        )
-
-    def to_api_create(self, model_id: int) -> "ApiActivityPlanCreate":
-        return ApiActivityPlanCreate(
-            model_id=model_id,
-            name=self.name,
-            start_time=self.start_time,
-            duration=self.end_time - self.start_time,
         )
 
 
 @define
 class ActivityPlanRead(EmptyActivityPlan):
-    id: int
-    model_id: int
-    sim_id: int
-    tags: Optional[List[Dict]] = field(
-        default = [], 
-        converter=converters.optional(
-            lambda listOfDicts: [d for d in listOfDicts]
-        )
-    )
+    sim_id: Optional[int] = None
     activities: Optional[List[Activity]] = field(
         default = None,
-        converter=converters.optional(
-            lambda listOfDicts: [Activity.from_dict(d) if isinstance(d, dict) else d for d in listOfDicts])
+        converter=converters.optional(_activities_converter)
     )
 
     def get_activity_start_time(self, activity: Union[int, Activity]) -> arrow.Arrow:
@@ -228,15 +230,24 @@ class ActivityPlanRead(EmptyActivityPlan):
 
     @classmethod
     def from_api_read(cls, api_plan_read: ApiActivityPlanRead) -> "ActivityPlanRead":
-        plan_start = arrow.get(api_plan_read.start_time)
+        simulation = api_plan_read.simulations[0]
+        sim_template = simulation.get("template") or {}
+        # simulation merges passed arguments together with default arguments from the sim template
+        # to export a plan with the same sim arguments, we must merge them here too
+        simulation_arguments = {
+            **(sim_template.get("arguments") or {}),
+            **(simulation.get("arguments") or {}),
+        }
+
         return ActivityPlanRead(
             id=api_plan_read.id,
             name=api_plan_read.name,
             model_id=api_plan_read.model_id,
-            sim_id=api_plan_read.simulations[0]["id"],
-            start_time=plan_start,
-            end_time=plan_start + api_plan_read.duration,
-            tags=api_plan_read.tags,
+            sim_id=simulation["id"],
+            start_time=api_plan_read.start_time,
+            duration=api_plan_read.duration,
+            simulation_arguments=simulation_arguments,
+            tags=transfer_tags(api_plan_read.tags),
             activities= None if api_plan_read.activity_directives is None else [
                 Activity.from_api_read(api_activity)
                 for api_activity in api_plan_read.activity_directives

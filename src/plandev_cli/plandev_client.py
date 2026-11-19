@@ -1,12 +1,16 @@
+import itertools
+import json
 import sys
 import time
 from pathlib import Path
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Union
 from copy import deepcopy
 
 import arrow
+from attrs import evolve
 
 from .schemas.api import ApiActivityPlanRead
 from .schemas.api import ApiEffectiveActivityArguments
@@ -64,13 +68,18 @@ class PlanDevClient:
                 name
                 start_time
                 duration
-                simulations{
+                simulations {
                     id
+                    arguments
+                    template: simulation_template {
+                        arguments
+                    }
                 }
                 tags {
                     tag {
                         id
                         name
+                        color
                     }
                 }
                 activity_directives(order_by: { start_offset: asc }) {
@@ -82,6 +91,13 @@ class PlanDevClient:
                     metadata
                     anchor_id
                     anchored_to_start
+                    tags {
+                        tag {
+                            id
+                            name
+                            color
+                        }
+                    }
                 }
             }
         }
@@ -100,13 +116,18 @@ class PlanDevClient:
                 name
                 start_time
                 duration
-                simulations{
+                simulations {
                     id
+                    arguments
+                    template: simulation_template {
+                        arguments
+                    }
                 }
                 tags {
                     tag {
                         id
                         name
+                        color
                     }
                 }
             }
@@ -164,7 +185,7 @@ class PlanDevClient:
             simulation_dataset_id=simulation_dataset_id
         )
         return resp['simulation']['plan']['id']
-    
+
     def get_tag_id_by_name(self, tag_name: str):
         get_tags_by_name_query = """
         query GetTagByName($name: String) {
@@ -184,16 +205,16 @@ class PlanDevClient:
         """
 
         resp = self.plandev_host.post_to_graphql(
-            get_tags_by_name_query, 
+            get_tags_by_name_query,
             name=tag_name
         )
 
         #if a tag with the specified name exists then returns the ID, else creates a new tag with this name
-        if len(resp) > 0: 
+        if len(resp) > 0:
             return resp[0]["id"]
-        else: 
+        else:
             new_tag_resp = self.plandev_host.post_to_graphql(
-                create_new_tag, 
+                create_new_tag,
                 name=tag_name
             )
 
@@ -209,11 +230,11 @@ class PlanDevClient:
             }
         }
         """
-        
+
         #add tag to plan
         resp = self.plandev_host.post_to_graphql(
-            add_tag_to_plan, 
-            plan_id=plan_id, 
+            add_tag_to_plan,
+            plan_id=plan_id,
             tag_id=self.get_tag_id_by_name(tag_name)
         )
 
@@ -222,80 +243,77 @@ class PlanDevClient:
     def create_activity_plan(
         self, model_id: int, plan_to_create: ActivityPlanCreate
     ) -> int:
+        """Create a plan from an `ActivityPlanCreate` via the gateway's `/importPlan`
 
-        api_plan_create = plan_to_create.to_api_create(model_id)
-        create_plan_mutation = """
-        mutation CreatePlan($plan: plan_insert_input!) {
-            createPlan: insert_plan_one(object: $plan) {
-                id
-                revision
+        Waits for the import to complete. Returns the new plan ID."""
+
+        # Plan transfer files need a unique ID on every directive. Anchors refer to them.
+        used_ids = {a.id for a in plan_to_create.activities if a.id is not None}
+        free_ids = (i for i in itertools.count(1) if i not in used_ids)
+        plan_to_create = evolve(
+            plan_to_create,
+            activities=[a if a.id is not None else evolve(a, id=next(free_ids)) for a in plan_to_create.activities],
+        )
+        return self.import_plan(plan_to_create.to_dict(), model_id)
+
+    def import_plan(
+        self,
+        plan: Dict,
+        model_id: Optional[int] = None,
+        name: Optional[str] = None,
+        poll_period: float = 1,
+        timeout: float = 900,
+    ) -> int:
+        """Import a PlanTransfer (v3, or v2) plan via the gateway's `/importPlan` and wait for it to finish
+
+        Args:
+            plan (Dict): Parsed PlanTransfer JSON
+            model_id (int, optional): Mission model for the plan. Required unless the plan embeds a `model`,
+                in which case it is ignored.
+            name (str, optional): Plan name. Defaults to the name in the plan.
+            poll_period (float): Seconds between checks of the import's status
+            timeout (float): Seconds to wait for the import to finish
+
+        Raises:
+            RuntimeError: The import was rejected, failed, or did not finish in time. A failed import leaves its
+                plan in PlanDev so it can be inspected or deleted.
+
+        Returns:
+            int: ID of the imported plan
+        """
+        if "model" not in plan and model_id is None:
+            raise ValueError("model_id is required unless the plan embeds its model")
+
+        # The gateway takes plan tags as IDs, and only from the form, not the file
+        tag_ids = [self.get_tag_id_by_name(t["tag"]["name"]) for t in plan.get("tags") or []]
+        form = {"name": name or plan.get("name"), "tags": json.dumps(tag_ids)}
+        if "model" not in plan:
+            # For a plan on an existing model the gateway reads the plan bounds from the form, not the file
+            form.update(model_id=model_id, start_time=plan.get("start_time"), duration=plan.get("duration"))
+
+        resp = self.plandev_host.post_to_gateway_import_plan(form, json.dumps(plan).encode())
+        plan_id = resp["plan_id"]
+
+        query = """
+        query GetPlanImportRequest($id: Int!) {
+            plan_import_request_by_pk(id: $id) {
+                status
+                reason
             }
         }
         """
-        plan_resp = self.plandev_host.post_to_graphql(
-            create_plan_mutation,
-            plan=api_plan_create.to_dict(),
-        )
-        plan_id = plan_resp["id"]
-        plan_revision = plan_resp["revision"]
-
-        #add plan tags if exists from plan_to_create
-        for tag in plan_to_create.tags:
-            self.add_plan_tag(plan_id, tag["tag"]["name"])
-                
-        # This loop exists to make sure all anchor IDs are updated as necessary
-
-        # Deep copy activities so we can augment and pop from the list
-        activities_to_upload = deepcopy(plan_to_create.activities)
-
-        # Map of old to new directive IDs
-        directive_id_mapping = {}
-
-        # Boolean catches errors to avoid an infinite loop
-        running = True
-        while len(activities_to_upload):
-            running = False
-
-            for act in activities_to_upload:
-                # If activity is anchored and the anchor isn't known yet, pass
-                # If activity is anchored and the anchor is known, add it
-                if act.anchor_id and act.anchor_id not in directive_id_mapping.keys():
-                    continue
-                else:
-                    if act.anchor_id:
-                        act.anchor_id = directive_id_mapping[act.anchor_id]
-                    directive_id_mapping[act.id] = self.create_activity(act, plan_id)
-                    activities_to_upload.remove(act)
-                    running = True
-
-            if not running:
+        deadline = time.monotonic() + timeout
+        while True:
+            request = self.plandev_host.post_to_graphql(query, id=resp["plan_import_request_id"])
+            if request["status"] == "complete":
+                return plan_id
+            if request["status"] == "failed":
                 raise RuntimeError(
-                    f"Failed to anchor activities: {', '.join([act.name for act in activities_to_upload])}"
+                    f"Import of plan {plan_id} failed (the plan was left in place): {json.dumps(request['reason'])}"
                 )
-
-        simulation_start_time = plan_to_create.start_time.isoformat()
-        simulation_end_time = plan_to_create.end_time.isoformat()
-        update_simulation_mutation = """
-        mutation updateSimulationBounds($plan_id: Int!, $simulation_start_time: timestamptz!, $simulation_end_time: timestamptz!) {
-            update_simulation(
-                where: {plan_id: {_eq: $plan_id}},
-                _set: {
-                    simulation_start_time: $simulation_start_time,
-                    simulation_end_time: $simulation_end_time
-                }
-            ){
-                affected_rows
-            }
-        }
-        """
-        _ = self.plandev_host.post_to_graphql(
-            update_simulation_mutation,
-            plan_id=plan_id,
-            simulation_start_time=simulation_start_time,
-            simulation_end_time=simulation_end_time
-        )
-
-        return plan_id
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"Import of plan {plan_id} did not finish within {timeout} seconds")
+            time.sleep(poll_period)
 
     def create_activity(self, activity_to_create: Activity, plan_id: int) -> int:
         api_activity_create = activity_to_create.to_api_create(plan_id)
@@ -360,8 +378,8 @@ class PlanDevClient:
     def upload_activity_presets(self, upload_obj):
         upload_activity_presets_query = """
         mutation upload_presets($object: [activity_presets_insert_input!]!) {
-            insert_activity_presets(objects: $object, 
-                                    on_conflict: {constraint: activity_presets_model_id_associated_activity_type_name_key, 
+            insert_activity_presets(objects: $object,
+                                    on_conflict: {constraint: activity_presets_model_id_associated_activity_type_name_key,
                                                   update_columns: arguments}
                                     ) {
                 returning {
@@ -375,7 +393,7 @@ class PlanDevClient:
         }"""
 
         resp = self.plandev_host.post_to_graphql(
-            upload_activity_presets_query, 
+            upload_activity_presets_query,
             object = upload_obj
         )
 
@@ -418,11 +436,11 @@ class PlanDevClient:
         """Pull resource samples from a simulation dataset, optionally filtering for specific states
 
         Each resource's values are returned in a list of points {x: <time>, y: <value>}.
-        
+
         Times are provided in microseconds from plan start.
 
-        Numeric resources can be either discrete-valued or vary linearly between samples. Samples are processed such 
-        that a linear interpolation between samples will always return a correct value. Two points at the same 
+        Numeric resources can be either discrete-valued or vary linearly between samples. Samples are processed such
+        that a linear interpolation between samples will always return a correct value. Two points at the same
         timestamp indicate a discontinuity.
 
         Args:
@@ -431,7 +449,7 @@ class PlanDevClient:
 
         Returns:
             Dict: Object with key "resourceSamples," the value of which is a dictionary of resource sample series keyed by resource name.
-        """        
+        """
 
         # checks to see if user inputted specific states. If so, use this query.
         if state_names:
@@ -472,8 +490,8 @@ class PlanDevClient:
             }
             """
             resp = self.plandev_host.post_to_graphql(resource_profile_query, simulation_dataset_id=simulation_dataset_id)
-        
-        
+
+
         profiles = resp["dataset"]["profiles"]
 
         plan_duration_query = """
@@ -628,7 +646,7 @@ class PlanDevClient:
     ) -> int:
 
         # Create unique jar identifier for server side
-        jar_id = self.upload_file(mission_model_path)
+        definition_file_id = self.upload_file(mission_model_path)
 
         create_model_mutation = """
         mutation CreateModel($model: mission_model_insert_input!) {
@@ -639,7 +657,7 @@ class PlanDevClient:
         """
 
         api_mission_model = ApiMissionModelCreate(
-            name=project_name, mission=mission, version=version, jar_id=jar_id
+            name=project_name, mission=mission, version=version, definition_file_id=definition_file_id
         )
 
         resp = self.plandev_host.post_to_graphql(
@@ -696,7 +714,7 @@ class PlanDevClient:
                 id
                 version
                 mission
-                jar_id
+                definition_file_id
             }
         }
         """
@@ -904,10 +922,10 @@ class PlanDevClient:
             $description: String!
         ) {
             createExpansionSet(
-                expansionIds: $expansion_ids, 
-                missionModelId: $mission_model_id, 
-                parcelId: $parcel_id, 
-                name: $name, 
+                expansionIds: $expansion_ids,
+                missionModelId: $mission_model_id,
+                parcelId: $parcel_id,
+                name: $name,
                 description: $description
             ) {
                 id
@@ -1073,7 +1091,7 @@ class PlanDevClient:
         update_simulation(where: { plan_id: { _eq: $plan_id}}, _set: { simulation_end_time: $new_end, simulation_start_time: $new_start}
         ) {
                 affected_rows
-                returning{    
+                returning{
       					simulation_end_time
       					simulation_start_time
                 }
@@ -1161,7 +1179,7 @@ class PlanDevClient:
         self, expansion_run_id: int, include_commands: bool = False
     ) -> ExpansionRun:
         """
-        Get metadata about an expansion run and, optionally, all expanded 
+        Get metadata about an expansion run and, optionally, all expanded
         activity instance commands/errors.
         """
         get_run_query = """
@@ -1566,7 +1584,7 @@ class PlanDevClient:
             id (int): _description_
             dictionary_type (Union[str, DictionaryType]): _description_
         """
-        
+
         if not isinstance(dictionary_type, DictionaryType):
             dictionary_type = DictionaryType(dictionary_type)
 
@@ -1603,8 +1621,8 @@ class PlanDevClient:
 
         Returns:
             int: ID of sequence adaptation
-        """        
-        
+        """
+
         query = """
         mutation CreateSequenceAdaptation($adaptation: sequence_adaptation_insert_input!) {
             createSequenceAdaptation: insert_sequence_adaptation_one(object: $adaptation) {
@@ -1622,7 +1640,7 @@ class PlanDevClient:
         Returns:
             List[SequenceAdaptationMetadata]: Metadata for all existing sequence adaptations
         """
-        
+
         query = """
         query ListSequenceAdaptations {
             sequence_adaptation {
@@ -1644,7 +1662,7 @@ class PlanDevClient:
             adaptation (str): String contents of adaptation JS file
             id (int): ID of sequence adaptation to update
         """
-        
+
         query = """
         mutation UpdateSequenceAdaptation($adaptation: String!, $id: Int!) {
             update_sequence_adaptation_by_pk(pk_columns: {id: $id}, _set: {adaptation: $adaptation}) {
@@ -1716,7 +1734,7 @@ class PlanDevClient:
         """List sequencing parcels
 
         Returns:
-            List[Parcel]: 
+            List[Parcel]:
         """
 
         resp = self.plandev_host.post_to_graphql(
@@ -1742,7 +1760,7 @@ class PlanDevClient:
 
         Args:
             id (int): ID of parcel to delete
-        """        
+        """
 
         self.plandev_host.post_to_graphql(
             """
@@ -1774,14 +1792,14 @@ class PlanDevClient:
             ...
         ]
         """
-        
+
         upload_scheduling_goals_query = """
         mutation InsertGoal($input: [scheduling_goal_definition_insert_input!]!){
             insert_scheduling_goal_definition(objects: $input){
                 returning {goal_id}
             }
         }"""
-        
+
         resp = self.plandev_host.post_to_graphql(
             upload_scheduling_goals_query,
             input=upload_object
@@ -1799,7 +1817,7 @@ class PlanDevClient:
         """
 
         resp = self.plandev_host.post_to_graphql(
-            get_scheduling_specification_for_plan_query, 
+            get_scheduling_specification_for_plan_query,
             plan_id=plan_id
         )
         return resp[0]["id"]
@@ -1850,7 +1868,7 @@ class PlanDevClient:
         }
         """
         resp = self.plandev_host.post_to_graphql(
-            add_goal_to_specification_query, 
+            add_goal_to_specification_query,
             object = upload_object
         )
 
@@ -1873,11 +1891,11 @@ class PlanDevClient:
         """
 
         resp_for_deleting_from_specs = self.plandev_host.post_to_graphql(
-            delete_scheduling_goals_from_all_specs_query, 
+            delete_scheduling_goals_from_all_specs_query,
             id_list=goal_id_list
         )
 
-        # Note that deleting the scheduling goal metadata entry will take care of the 
+        # Note that deleting the scheduling goal metadata entry will take care of the
         # scheduling goal definition entry too
         delete_scheduling_goals_query = """
         mutation DeleteSchedulingGoals($id_list: [Int!]!) {
@@ -1888,7 +1906,7 @@ class PlanDevClient:
         """
 
         resp = self.plandev_host.post_to_graphql(
-            delete_scheduling_goals_query, 
+            delete_scheduling_goals_query,
             id_list=goal_id_list
         )
 
@@ -1904,7 +1922,7 @@ class PlanDevClient:
         """
 
         resp = self.plandev_host.post_to_graphql(
-            get_plan_revision_query, 
+            get_plan_revision_query,
             plan_id=planId
         )
 
@@ -1951,7 +1969,7 @@ class PlanDevClient:
 
         resp = self.plandev_host.post_to_graphql(upload_constraint_query, constraint=constraint)
         return resp["constraint_id"]
-    
+
     def add_constraint_to_plan(self, constraint_id, plan_id):
         """
         Add a constraint to a plan's constraint specification.
@@ -1968,7 +1986,7 @@ class PlanDevClient:
 
         """
         resp = self.plandev_host.post_to_graphql(
-            add_constraint_to_specification_query, 
+            add_constraint_to_specification_query,
             constraint_id = constraint_id,
             plan_id = plan_id
         )
@@ -1990,7 +2008,7 @@ class PlanDevClient:
         """
 
         resp_for_deleting_from_specs = self.plandev_host.post_to_graphql(
-            delete_constraint_from_all_specs_query, 
+            delete_constraint_from_all_specs_query,
             id=id
         )
 
@@ -2004,7 +2022,7 @@ class PlanDevClient:
 
         resp = self.plandev_host.post_to_graphql(delete_constraint_query, id=id)
         return resp["id"]
-    
+
     def update_constraint(self, id, definition):
         old_update_constraint_query = """
         mutation UpdateConstraint($constarint_id: Int!, $constraint: constraint_definition_set_input!) {
@@ -2032,7 +2050,7 @@ class PlanDevClient:
 
         resp = self.plandev_host.post_to_graphql(update_constraint_query, constarint_id=id, definition=definition)
         return resp
-    
+
     def get_constraint_by_id(self, id):
         get_constraint_by_id_query = """
         query get_constraint($constraint_id: Int!) {
@@ -2055,7 +2073,7 @@ class PlanDevClient:
 
         resp = self.plandev_host.post_to_graphql(get_constraint_by_id_query, constraint_id=id)
         return resp
-    
+
     def get_constraint_specification_for_plan(self, plan_id):
         get_constraint_specification_for_plan_query = """
         query GetConstraintSpecificationForPlan($plan_id: Int!) {
@@ -2066,7 +2084,7 @@ class PlanDevClient:
         """
 
         resp = self.plandev_host.post_to_graphql(
-            get_constraint_specification_for_plan_query, 
+            get_constraint_specification_for_plan_query,
             plan_id=plan_id
         )
         return resp[0]["id"]
@@ -2182,7 +2200,7 @@ class PlanDevClient:
             schemas=schemas
         )
         return resp
-        
+
     def delete_directive_metadata_schema(self, key) -> list:
         """Delete metadata schemas
 
